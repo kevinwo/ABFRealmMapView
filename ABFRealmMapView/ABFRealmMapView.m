@@ -448,69 +448,63 @@ static NSString * const ABFAnnotationViewReuseId = @"ABFAnnotationViewReuseId";
 
 - (void)refreshMapView
 {
-    @synchronized(self) {
-        [self.mapQueue cancelAllOperations];
-        
-        MKCoordinateRegion currentRegion = self.region;
-        
-        ABFLocationFetchRequest *fetchRequest =
-        [ABFLocationFetchRequest locationFetchRequestWithEntityName:self.entityName
-                                                            inRealm:self.realm
-                                                    latitudeKeyPath:self.latitudeKeyPath
-                                                   longitudeKeyPath:self.longitudeKeyPath
-                                                          forRegion:currentRegion];
-        
-        if (self.basePredicate) {
-            NSCompoundPredicate *compPred =
-            [NSCompoundPredicate andPredicateWithSubpredicates:@[fetchRequest.predicate,self.basePredicate]];
-            
-            fetchRequest.predicate = compPred;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized(self) {
+            [self.mapQueue cancelAllOperations];
+
+            MKCoordinateRegion currentRegion = self.region;
+
+            ABFLocationFetchRequest *fetchRequest =
+            [ABFLocationFetchRequest locationFetchRequestWithEntityName:self.entityName
+                                                                inRealm:self.realm
+                                                        latitudeKeyPath:self.latitudeKeyPath
+                                                       longitudeKeyPath:self.longitudeKeyPath
+                                                              forRegion:currentRegion];
+
+            if (self.basePredicate) {
+                NSCompoundPredicate *compPred =
+                [NSCompoundPredicate andPredicateWithSubpredicates:@[fetchRequest.predicate,self.basePredicate]];
+
+                fetchRequest.predicate = compPred;
+            }
+
+            [self.fetchResultsController updateLocationFetchRequest:fetchRequest
+                                                       titleKeyPath:self.titleKeyPath
+                                                    subtitleKeyPath:self.subtitleKeyPath];
+
+            typeof(self) __weak weakSelf = self;
+            NSBlockOperation *refreshOperation = [[NSBlockOperation alloc] init];
+            NSBlockOperation __weak *weakOp = refreshOperation;
+            MKMapRect visibleMapRect = self.visibleMapRect;
+            ABFZoomLevel currentZoomLevel = ABFZoomLevelForVisibleMapRect(visibleMapRect);
+
+            if (self.clusterAnnotations &&
+                currentZoomLevel <= self.maxZoomLevelForClustering) {
+
+                MKZoomScale zoomScale = MKZoomScaleForMapView(self);
+
+                [refreshOperation addExecutionBlock:^{
+                    if (![weakOp isCancelled]) {
+                        [weakSelf.fetchResultsController performClusteringFetchForVisibleMapRect:visibleMapRect
+                                                                                       zoomScale:zoomScale];
+                        [weakSelf addAnnotationsToMapView:weakSelf.fetchResultsController.annotations];
+                        [weakSelf registerChangeNotification:weakSelf.autoRefresh];
+                    }
+                }];
+            }
+            else {
+                [refreshOperation addExecutionBlock:^{
+                    if (![weakOp isCancelled]) {
+                        [weakSelf.fetchResultsController performFetch];
+                        [weakSelf addAnnotationsToMapView:weakSelf.fetchResultsController.annotations];
+                        [weakSelf registerChangeNotification:weakSelf.autoRefresh];
+                    }
+                }];
+            }
+
+            [self.mapQueue addOperation:refreshOperation];
         }
-        
-        [self.fetchResultsController updateLocationFetchRequest:fetchRequest
-                                                   titleKeyPath:self.titleKeyPath
-                                                subtitleKeyPath:self.subtitleKeyPath];
-        
-        typeof(self) __weak weakSelf = self;
-        
-        NSBlockOperation *refreshOperation = [[NSBlockOperation alloc] init];
-        
-        NSBlockOperation __weak *weakOp = refreshOperation;
-        
-        MKMapRect visibleMapRect = self.visibleMapRect;
-        
-        ABFZoomLevel currentZoomLevel = ABFZoomLevelForVisibleMapRect(visibleMapRect);
-        
-        if (self.clusterAnnotations &&
-            currentZoomLevel <= self.maxZoomLevelForClustering) {
-            
-            MKZoomScale zoomScale = MKZoomScaleForMapView(self);
-            
-            [refreshOperation addExecutionBlock:^{
-                if (![weakOp isCancelled]) {
-                    [weakSelf.fetchResultsController performClusteringFetchForVisibleMapRect:visibleMapRect
-                                                                                   zoomScale:zoomScale];
-                    
-                    [weakSelf addAnnotationsToMapView:weakSelf.fetchResultsController.annotations];
-                    
-                    [weakSelf registerChangeNotification:weakSelf.autoRefresh];
-                }
-            }];
-        }
-        else {
-            [refreshOperation addExecutionBlock:^{
-                if (![weakOp isCancelled]) {
-                    [weakSelf.fetchResultsController performFetch];
-                    
-                    [weakSelf addAnnotationsToMapView:weakSelf.fetchResultsController.annotations];
-                    
-                    [weakSelf registerChangeNotification:weakSelf.autoRefresh];
-                }
-            }];
-        }
-        
-        [self.mapQueue addOperation:refreshOperation];
-    }
+    });
 }
 
 #pragma mark - Private Instance
